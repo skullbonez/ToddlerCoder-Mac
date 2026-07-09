@@ -10,12 +10,20 @@ APP_DIR="$DIST_DIR/ToddlerCoder.app"
 rm -rf "$BUILD_DIR" "$DIST_DIR"
 mkdir -p "$BUILD_DIR" "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-swiftc \
-  "$ROOT_DIR/Sources/ToddlerCoderMac/main.swift" \
-  -O \
-  -o "$APP_DIR/Contents/MacOS/$APP_NAME" \
-  -framework Cocoa \
-  -framework ApplicationServices
+for arch in arm64 x86_64; do
+  swiftc \
+    "$ROOT_DIR/Sources/ToddlerCoderMac/main.swift" \
+    -O \
+    -target "$arch-apple-macos12.0" \
+    -o "$BUILD_DIR/$APP_NAME-$arch" \
+    -framework Cocoa \
+    -framework ApplicationServices
+done
+
+lipo -create \
+  "$BUILD_DIR/$APP_NAME-arm64" \
+  "$BUILD_DIR/$APP_NAME-x86_64" \
+  -output "$APP_DIR/Contents/MacOS/$APP_NAME"
 
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 chmod +x "$APP_DIR/Contents/MacOS/$APP_NAME"
