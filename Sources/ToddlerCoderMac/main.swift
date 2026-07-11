@@ -1057,9 +1057,18 @@ private final class KeyboardGuard {
         self.view = view
     }
 
-    func start() -> Bool {
-        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+    func start(promptIfNeeded: Bool) -> Bool {
+        guard eventTap == nil else {
+            return true
+        }
+
+        guard AXIsProcessTrusted() else {
+            if promptIfNeeded {
+                let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+                _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+            }
+            return false
+        }
 
         let events = [CGEventType.keyDown, .keyUp, .flagsChanged]
         let eventMask = events.reduce(CGEventMask(0)) { partial, type in
@@ -1144,10 +1153,18 @@ private final class KeyboardGuard {
     }
 }
 
+// A borderless NSWindow refuses key status by default, which leaves the kiosk
+// window deaf to keyboard events whenever the global event tap is unavailable.
+private final class KioskWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var toddlerView: ToddlerCoderView?
     private var keyboardGuard: KeyboardGuard?
+    private var permissionPollTimer: Timer?
     private var allowTerminate = false
     private let kioskMode: Bool
 
@@ -1191,7 +1208,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let contentRect = kioskMode ? screenFrame : CGRect(x: 0, y: 0, width: 1280, height: 800)
         let styleMask: NSWindow.StyleMask = kioskMode ? [.borderless] : [.titled, .closable, .miniaturizable, .resizable]
 
-        let window = NSWindow(contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)
+        let window = KioskWindow(contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)
         window.title = kioskMode ? "Toddler Coder" : "Toddler Coder - Debug Windowed"
         window.backgroundColor = rgb(13, 17, 23)
         window.delegate = self
@@ -1220,14 +1237,34 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if kioskMode {
             let guardInstance = KeyboardGuard(view: view)
             keyboardGuard = guardInstance
-            if guardInstance.start() {
+            if guardInstance.start(promptIfNeeded: true) {
                 enableKioskPresentation(for: window)
                 view.setGuardStatus("keyboard guard active")
             } else {
                 view.setGuardStatus("grant input permission")
+                startPermissionPolling()
             }
         } else {
             view.setGuardStatus("local guard")
+        }
+    }
+
+    // Accessibility trust granted in System Settings applies to this process
+    // without a relaunch, but nothing notifies us — poll until the tap starts.
+    private func startPermissionPolling() {
+        permissionPollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, let window = self.window, let view = self.toddlerView, let keyboardGuard = self.keyboardGuard else {
+                return
+            }
+
+            guard AXIsProcessTrusted(), keyboardGuard.start(promptIfNeeded: false) else {
+                return
+            }
+
+            self.permissionPollTimer?.invalidate()
+            self.permissionPollTimer = nil
+            self.enableKioskPresentation(for: window)
+            view.setGuardStatus("keyboard guard active")
         }
     }
 
@@ -1246,6 +1283,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     private func adultExit() {
         allowTerminate = true
+        permissionPollTimer?.invalidate()
+        permissionPollTimer = nil
         keyboardGuard?.stop()
         keyboardGuard = nil
         NSApp.presentationOptions = []

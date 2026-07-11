@@ -3,8 +3,12 @@ name: Build Mac App
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -22,3 +26,21 @@ jobs:
         with:
           name: ToddlerCoder-Mac
           path: dist/ToddlerCoder-Mac.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/ToddlerCoder-Mac.zip \
+            --title "Toddler Coder $GITHUB_REF_NAME" \
+            --notes "$(cat <<'EOF'
+          Native macOS build of Toddler Coder.
+
+          **Install:** download `ToddlerCoder-Mac.zip`, unzip, then right-click `ToddlerCoder.app` and choose **Open** (the app is not notarized, so double-clicking will be blocked by Gatekeeper the first time).
+
+          **First launch:** macOS will ask for Accessibility permission so the app can lock the keyboard in kid mode. Grant it in System Settings → Privacy & Security → Accessibility — the app now picks the permission up automatically without a restart, and the keyboard works in fallback mode while you wait.
+
+          **Adults exit with:** hold Ctrl+Shift+Q for 3 seconds.
+          EOF
+          )"
